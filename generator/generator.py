@@ -1,13 +1,20 @@
 import os
 import random
+import time
 import uuid
 from datetime import datetime
 
 import clickhouse_connect
 
+CLICKHOUSE_HOST = os.environ.get("CLICKHOUSE_HOST", "localhost")
+CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "default")
+CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
+GEN_SEED = int(os.environ.get("GEN_SEED", "42"))
+GEN_INTERVAL = float(os.environ.get("GEN_INTERVAL", "1.5"))
+GEN_RATE = float(os.environ.get("GEN_RATE", "8"))
+
 CITIES = ["Москва", "Санкт-Петербург", "Владивосток", "Новосибирск", "Екатеринбург", "Хабаровск"]
 PAYMENT_METHODS = ["card", "sbp", "cash", "installment"]
-BATCH_SIZE = 10
 
 COLUMNS = [
     "event_time", "order_id", "user_id", "product_id", "category",
@@ -29,20 +36,22 @@ def make_order(event_time, products):
 
 
 def main():
+    random.seed(GEN_SEED)
+
     client = clickhouse_connect.get_client(
-        host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
-        username=os.environ.get("CLICKHOUSE_USER", "default"),
-        password=os.environ.get("CLICKHOUSE_PASSWORD", ""),
+        host=CLICKHOUSE_HOST, username=CLICKHOUSE_USER, password=CLICKHOUSE_PASSWORD
     )
     products = client.query(
         "SELECT product_id, category, base_price FROM shop.products ORDER BY product_id"
     ).result_rows
     print(f"Загружено товаров: {len(products)}")
 
-    now = datetime.now().replace(microsecond=0)
-    rows = [make_order(now, products) for _ in range(BATCH_SIZE)]
-    client.insert("shop.orders", rows, column_names=COLUMNS)
-    print(f"Вставлено заказов: {len(rows)}")
+    while True:
+        now = datetime.now().replace(microsecond=0)
+        rows = [make_order(now, products) for _ in range(round(GEN_RATE))]
+        client.insert("shop.orders", rows, column_names=COLUMNS)
+        print(f"Вставлено заказов: {len(rows)}")
+        time.sleep(GEN_INTERVAL)
 
 
 if __name__ == "__main__":
