@@ -14,6 +14,7 @@ GEN_INTERVAL = float(os.environ.get("GEN_INTERVAL", "1.5"))
 GEN_RATE = float(os.environ.get("GEN_RATE", "8"))
 
 CITIES = ["Москва", "Санкт-Петербург", "Владивосток", "Новосибирск", "Екатеринбург", "Хабаровск"]
+CITY_WEIGHTS = [40, 20, 12, 11, 10, 7]
 PAYMENT_METHODS = ["card", "sbp", "cash", "installment"]
 
 COLUMNS = [
@@ -22,11 +23,11 @@ COLUMNS = [
 ]
 
 
-def make_order(event_time, products):
-    product_id, category, base_price = random.choice(products)
+def make_order(event_time, products, product_weights):
+    product_id, category, base_price = random.choices(products, product_weights)[0]
     price = round(base_price * random.uniform(0.9, 1.0), 2)
     quantity = 1 if random.random() < 0.8 else random.randint(2, 5)
-    city = random.choice(CITIES)
+    city = random.choices(CITIES, CITY_WEIGHTS)[0]
     payment_method = random.choice(PAYMENT_METHODS)
     user_id = random.randint(1, 5000)
     return [
@@ -44,11 +45,13 @@ def main():
     products = client.query(
         "SELECT product_id, category, base_price FROM shop.products ORDER BY product_id"
     ).result_rows
+    random.shuffle(products)
+    product_weights = [1 / rank for rank in range(1, len(products) + 1)]
     print(f"Загружено товаров: {len(products)}")
 
     while True:
         now = datetime.now().replace(microsecond=0)
-        rows = [make_order(now, products) for _ in range(round(GEN_RATE))]
+        rows = [make_order(now, products, product_weights) for _ in range(round(GEN_RATE))]
         client.insert("shop.orders", rows, column_names=COLUMNS)
         print(f"Вставлено заказов: {len(rows)}")
         time.sleep(GEN_INTERVAL)
