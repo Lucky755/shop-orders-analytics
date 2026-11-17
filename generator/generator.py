@@ -2,7 +2,7 @@ import os
 import random
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import clickhouse_connect
 import numpy as np
@@ -26,23 +26,32 @@ CITIES = ["Москва", "Санкт-Петербург", "Владивосто
 CITY_WEIGHTS = [40, 20, 12, 11, 10, 7]
 PAYMENT_METHODS = ["card", "sbp", "cash", "installment"]
 
+SALE_MINUTES = 10
+SALE_FACTOR = 5
+SALE_EVERY_SECONDS = 3 * 3600
+ANOMALY_CHANCE = 0.00002
+
 COLUMNS = [
     "event_time", "order_id", "user_id", "product_id", "category",
     "city", "price", "quantity", "payment_method",
 ]
 
 
-def batch_size(now):
+def batch_size(now, sale):
     rate = GEN_RATE * HOUR_FACTORS[now.hour]
     if now.weekday() >= 5:
         rate *= WEEKEND_FACTOR
     rate *= 1 + TREND_PER_DAY * (now - TREND_START).total_seconds() / 86400
+    if sale:
+        rate *= SALE_FACTOR
     return np.random.poisson(rate)
 
 
-def choose_payment(amount):
+def choose_payment(amount, sale):
     if amount < 1000:
         weights = [55, 25, 20, 0]
+    elif sale:
+        weights = [30, 40, 5, 25]
     elif amount >= 15000:
         weights = [50, 25, 3, 22]
     else:
@@ -50,12 +59,16 @@ def choose_payment(amount):
     return random.choices(PAYMENT_METHODS, weights)[0]
 
 
-def make_order(event_time, products, product_weights):
+def make_order(event_time, products, product_weights, sale):
     product_id, category, base_price = random.choices(products, product_weights)[0]
     price = round(base_price * random.uniform(0.9, 1.0), 2)
     quantity = 1 if random.random() < 0.8 else random.randint(2, 5)
+    if random.random() < ANOMALY_CHANCE:
+        quantity = 500
+    if random.random() < ANOMALY_CHANCE:
+        price = 0.01
     city = random.choices(CITIES, CITY_WEIGHTS)[0]
-    payment_method = choose_payment(price * quantity)
+    payment_method = choose_payment(price * quantity, sale)
     user_id = random.randint(1, 5000)
     return [
         event_time, uuid.uuid4(), user_id, product_id, category,
@@ -77,10 +90,16 @@ def main():
     product_weights = [1 / rank for rank in range(1, len(products) + 1)]
     print(f"Загружено товаров: {len(products)}")
 
+    sale_until = datetime.min
     while True:
         now = datetime.now().replace(microsecond=0)
-        size = batch_size(now)
-        rows = [make_order(now, products, product_weights) for _ in range(size)]
+        sale = now < sale_until
+        if not sale and random.random() < GEN_INTERVAL / SALE_EVERY_SECONDS:
+            sale_until = now + timedelta(minutes=SALE_MINUTES)
+            sale = True
+            print(f"Распродажа до {sale_until:%H:%M:%S}")
+        size = batch_size(now, sale)
+        rows = [make_order(now, products, product_weights, sale) for _ in range(size)]
         client.insert("shop.orders", rows, column_names=COLUMNS)
         print(f"Вставлено заказов: {len(rows)}")
         time.sleep(GEN_INTERVAL)
