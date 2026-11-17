@@ -76,13 +76,39 @@ def make_order(event_time, products, product_weights, sale):
     ]
 
 
+def connect():
+    delay = 1
+    while True:
+        try:
+            return clickhouse_connect.get_client(
+                host=CLICKHOUSE_HOST, username=CLICKHOUSE_USER, password=CLICKHOUSE_PASSWORD
+            )
+        except Exception as error:
+            print(f"ClickHouse недоступен: {error}")
+        print(f"Повтор подключения через {delay} с")
+        time.sleep(delay)
+        delay = min(delay * 2, 30)
+
+
+def insert_batch(client, rows):
+    delay = 1
+    while True:
+        try:
+            client.insert("shop.orders", rows, column_names=COLUMNS)
+            print(f"Вставлено заказов: {len(rows)}")
+            return
+        except Exception as error:
+            print(f"Ошибка вставки: {error}")
+        print(f"Повтор вставки через {delay} с")
+        time.sleep(delay)
+        delay = min(delay * 2, 30)
+
+
 def main():
     random.seed(GEN_SEED)
     np.random.seed(GEN_SEED)
 
-    client = clickhouse_connect.get_client(
-        host=CLICKHOUSE_HOST, username=CLICKHOUSE_USER, password=CLICKHOUSE_PASSWORD
-    )
+    client = connect()
     products = client.query(
         "SELECT product_id, category, base_price FROM shop.products ORDER BY product_id"
     ).result_rows
@@ -100,8 +126,7 @@ def main():
             print(f"Распродажа до {sale_until:%H:%M:%S}")
         size = batch_size(now, sale)
         rows = [make_order(now, products, product_weights, sale) for _ in range(size)]
-        client.insert("shop.orders", rows, column_names=COLUMNS)
-        print(f"Вставлено заказов: {len(rows)}")
+        insert_batch(client, rows)
         time.sleep(GEN_INTERVAL)
 
 
