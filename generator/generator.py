@@ -40,12 +40,22 @@ def batch_size(now):
     return np.random.poisson(rate)
 
 
+def choose_payment(amount):
+    if amount < 1000:
+        weights = [55, 25, 20, 0]
+    elif amount >= 15000:
+        weights = [50, 25, 3, 22]
+    else:
+        weights = [60, 25, 10, 5]
+    return random.choices(PAYMENT_METHODS, weights)[0]
+
+
 def make_order(event_time, products, product_weights):
     product_id, category, base_price = random.choices(products, product_weights)[0]
     price = round(base_price * random.uniform(0.9, 1.0), 2)
     quantity = 1 if random.random() < 0.8 else random.randint(2, 5)
     city = random.choices(CITIES, CITY_WEIGHTS)[0]
-    payment_method = random.choice(PAYMENT_METHODS)
+    payment_method = choose_payment(price * quantity)
     user_id = random.randint(1, 5000)
     return [
         event_time, uuid.uuid4(), user_id, product_id, category,
