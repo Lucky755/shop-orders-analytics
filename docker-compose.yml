@@ -18,5 +18,19 @@ services:
       timeout: 3s
       retries: 20
 
+  generator:
+    build: ./generator
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      GEN_SEED: ${GEN_SEED}
+      GEN_INTERVAL: ${GEN_INTERVAL}
+      GEN_RATE: ${GEN_RATE}
+      TZ: ${TZ}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
 volumes:
   clickhouse_data:
