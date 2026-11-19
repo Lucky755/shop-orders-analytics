@@ -1,6 +1,7 @@
 import os
 import random
-import time
+import signal
+import threading
 import uuid
 from datetime import datetime, timedelta
 
@@ -35,6 +36,13 @@ COLUMNS = [
     "event_time", "order_id", "user_id", "product_id", "category",
     "city", "price", "quantity", "payment_method",
 ]
+
+stop_event = threading.Event()
+
+
+def handle_stop(signum, frame):
+    print("Получен сигнал остановки, дописываю текущий батч")
+    stop_event.set()
 
 
 def batch_size(now, sale):
@@ -85,8 +93,11 @@ def connect():
             )
         except Exception as error:
             print(f"ClickHouse недоступен: {error}")
+        if stop_event.is_set():
+            print("Генератор остановлен до подключения к ClickHouse")
+            raise SystemExit
         print(f"Повтор подключения через {delay} с")
-        time.sleep(delay)
+        stop_event.wait(delay)
         delay = min(delay * 2, 30)
 
 
@@ -99,12 +110,17 @@ def insert_batch(client, rows):
             return
         except Exception as error:
             print(f"Ошибка вставки: {error}")
+        if stop_event.is_set():
+            print(f"Батч из {len(rows)} заказов не записан из-за остановки")
+            return
         print(f"Повтор вставки через {delay} с")
-        time.sleep(delay)
+        stop_event.wait(delay)
         delay = min(delay * 2, 30)
 
 
 def main():
+    signal.signal(signal.SIGTERM, handle_stop)
+    signal.signal(signal.SIGINT, handle_stop)
     random.seed(GEN_SEED)
     np.random.seed(GEN_SEED)
 
@@ -117,7 +133,7 @@ def main():
     print(f"Загружено товаров: {len(products)}")
 
     sale_until = datetime.min
-    while True:
+    while not stop_event.is_set():
         now = datetime.now().replace(microsecond=0)
         sale = now < sale_until
         if not sale and random.random() < GEN_INTERVAL / SALE_EVERY_SECONDS:
@@ -127,7 +143,8 @@ def main():
         size = batch_size(now, sale)
         rows = [make_order(now, products, product_weights, sale) for _ in range(size)]
         insert_batch(client, rows)
-        time.sleep(GEN_INTERVAL)
+        stop_event.wait(GEN_INTERVAL)
+    print("Генератор остановлен")
 
 
 if __name__ == "__main__":
