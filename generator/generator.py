@@ -14,6 +14,7 @@ CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
 GEN_SEED = int(os.environ.get("GEN_SEED", "42"))
 GEN_INTERVAL = float(os.environ.get("GEN_INTERVAL", "1.5"))
 GEN_RATE = float(os.environ.get("GEN_RATE", "8"))
+BACKFILL_HOURS = int(os.environ.get("BACKFILL_HOURS", "72"))
 
 HOUR_FACTORS = [
     0.2, 0.15, 0.1, 0.1, 0.1, 0.15, 0.3, 0.5, 0.7, 0.9, 1.0, 1.1,
@@ -45,8 +46,15 @@ def handle_stop(signum, frame):
     stop_event.set()
 
 
-def batch_size(now, sale):
-    rate = GEN_RATE * HOUR_FACTORS[now.hour]
+def update_sale(now, sale_until, seconds):
+    if now >= sale_until and random.random() < seconds / SALE_EVERY_SECONDS:
+        sale_until = now + timedelta(minutes=SALE_MINUTES)
+        print(f"Распродажа с {now:%d.%m %H:%M} до {sale_until:%H:%M}")
+    return sale_until
+
+
+def batch_size(now, sale, seconds):
+    rate = GEN_RATE * seconds / GEN_INTERVAL * HOUR_FACTORS[now.hour]
     if now.weekday() >= 5:
         rate *= WEEKEND_FACTOR
     rate *= 1 + TREND_PER_DAY * (now - TREND_START).total_seconds() / 86400
@@ -118,6 +126,27 @@ def insert_batch(client, rows):
         delay = min(delay * 2, 30)
 
 
+def backfill(client, products, product_weights):
+    if BACKFILL_HOURS <= 0 or client.command("SELECT count() FROM shop.orders") > 0:
+        return
+    end = datetime.now().replace(second=0, microsecond=0)
+    minute = end - timedelta(hours=BACKFILL_HOURS)
+    print(f"Заливаю историю за {BACKFILL_HOURS} ч, начиная с {minute:%d.%m %H:%M}")
+    sale_until = datetime.min
+    rows = []
+    while minute < end and not stop_event.is_set():
+        sale_until = update_sale(minute, sale_until, 60)
+        sale = minute < sale_until
+        for _ in range(batch_size(minute, sale, 60)):
+            event_time = minute + timedelta(seconds=random.randint(0, 59))
+            rows.append(make_order(event_time, products, product_weights, sale))
+        minute += timedelta(minutes=1)
+        if minute.minute == 0 or minute == end:
+            insert_batch(client, rows)
+            rows = []
+    print("Заливка истории закончена")
+
+
 def main():
     signal.signal(signal.SIGTERM, handle_stop)
     signal.signal(signal.SIGINT, handle_stop)
@@ -131,16 +160,14 @@ def main():
     random.shuffle(products)
     product_weights = [1 / rank for rank in range(1, len(products) + 1)]
     print(f"Загружено товаров: {len(products)}")
+    backfill(client, products, product_weights)
 
     sale_until = datetime.min
     while not stop_event.is_set():
         now = datetime.now().replace(microsecond=0)
+        sale_until = update_sale(now, sale_until, GEN_INTERVAL)
         sale = now < sale_until
-        if not sale and random.random() < GEN_INTERVAL / SALE_EVERY_SECONDS:
-            sale_until = now + timedelta(minutes=SALE_MINUTES)
-            sale = True
-            print(f"Распродажа до {sale_until:%H:%M:%S}")
-        size = batch_size(now, sale)
+        size = batch_size(now, sale, GEN_INTERVAL)
         rows = [make_order(now, products, product_weights, sale) for _ in range(size)]
         insert_batch(client, rows)
         stop_event.wait(GEN_INTERVAL)
