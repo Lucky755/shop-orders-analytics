@@ -17,6 +17,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    stop_grace_period: 15s
 
   generator:
     build: ./generator
@@ -32,6 +33,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
 
 volumes:
   clickhouse_data:
