@@ -27,6 +27,7 @@ services:
       GEN_SEED: ${GEN_SEED}
       GEN_INTERVAL: ${GEN_INTERVAL}
       GEN_RATE: ${GEN_RATE}
+      BACKFILL_HOURS: ${BACKFILL_HOURS}
       TZ: ${TZ}
     depends_on:
       clickhouse:
