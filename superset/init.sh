@@ -12,4 +12,8 @@ superset fab create-admin \
 
 superset init
 
+superset set-database-uri \
+    --database_name ClickHouse \
+    --uri "clickhousedb://$CLICKHOUSE_USER:$CLICKHOUSE_PASSWORD@clickhouse:8123/shop"
+
 echo "Инициализация Superset закончена"
